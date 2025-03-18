@@ -90,7 +90,7 @@ def main(exp, args, num_gpu):
             ckpt_file = args.ckpt
         logger.info("loading checkpoint")
         loc = "cuda:{}".format(rank)
-        ckpt = torch.load(ckpt_file, map_location=loc)
+        ckpt = torch.load(ckpt_file, map_location=loc, weights_only=True)
         # load the model state dict
         model.load_state_dict(ckpt["model"])
         logger.info("loaded checkpoint done.")

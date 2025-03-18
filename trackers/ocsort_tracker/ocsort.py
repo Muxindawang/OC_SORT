@@ -58,7 +58,7 @@ class KalmanBoxTracker(object):
     """
     This class represents the internal state of individual tracked objects observed as bbox.
     """
-    count = 0
+    count = 0    # 分配ID
 
     def __init__(self, bbox, delta_t=3, orig=False):
         """
@@ -68,6 +68,7 @@ class KalmanBoxTracker(object):
         # define constant velocity model
         if not orig:
           from .kalmanfilter import KalmanFilterNew as KalmanFilter
+          # x1 y1 x2 y2 vx vy
           self.kf = KalmanFilter(dim_x=7, dim_z=4)
         else:
           from filterpy.kalman import KalmanFilter
@@ -84,12 +85,12 @@ class KalmanBoxTracker(object):
         self.kf.Q[4:, 4:] *= 0.01
 
         self.kf.x[:4] = convert_bbox_to_z(bbox)
-        self.time_since_update = 0
+        self.time_since_update = 0    # 自上次更新以来的时间步数。
         self.id = KalmanBoxTracker.count
         KalmanBoxTracker.count += 1
         self.history = []
-        self.hits = 0
-        self.hit_streak = 0
+        self.hits = 0    # 跟踪器被成功匹配的次数。
+        self.hit_streak = 0    # 连续匹配的次数。
         self.age = 0
         """
         NOTE: [-1,-1,-1,-1,-1] is a compromising placeholder for non-observation status, the same for the return of 
@@ -109,6 +110,7 @@ class KalmanBoxTracker(object):
         if bbox is not None:
             if self.last_observation.sum() >= 0:  # no previous observation
                 previous_box = None
+                # 找到上一次有观测值的时候
                 for i in range(self.delta_t):
                     dt = self.delta_t - i
                     if self.age - dt in self.observations:
@@ -177,6 +179,14 @@ class OCSort(object):
         iou_threshold=0.3, delta_t=3, asso_func="iou", inertia=0.2, use_byte=False):
         """
         Sets key parameters for SORT
+        det_thresh：检测的置信度阈值，用于筛选高置信度的检测框。
+        max_age：跟踪器的最大存活时间（未更新的帧数）。如果超过这个时间，跟踪器会被移除。
+        min_hits：跟踪器需要连续匹配的最小次数，才能被认为是有效的。
+        iou_threshold：匹配时使用的交并比阈值。
+        delta_t：用于计算目标速度方向的时间步长。
+        asso_func：匹配函数的选择，例如 "iou" 或其他自定义函数。
+        inertia：方向一致性惩罚的权重。
+        use_byte：是否启用类似 ByteTrack 的低置信度检测的二次匹配。
         """
         self.max_age = max_age
         self.min_hits = min_hits
@@ -203,6 +213,9 @@ class OCSort(object):
 
         self.frame_count += 1
         # post_process detections
+        '''
+        提取检测框的置信度和坐标。如果检测结果来自 GPU，将其转换为 NumPy 数组。
+        '''
         if output_results.shape[1] == 5:
             scores = output_results[:, 4]
             bboxes = output_results[:, :4]
@@ -210,10 +223,16 @@ class OCSort(object):
             output_results = output_results.cpu().numpy()
             scores = output_results[:, 4] * output_results[:, 5]
             bboxes = output_results[:, :4]  # x1y1x2y2
+
         img_h, img_w = img_info[0], img_info[1]
         scale = min(img_size[0] / float(img_h), img_size[1] / float(img_w))
         bboxes /= scale
         dets = np.concatenate((bboxes, np.expand_dims(scores, axis=-1)), axis=1)
+        '''
+        筛选出置信度大于0.1的检测框。
+        筛选出置信度在[0.1, det_thresh) 之间的检测框，用于二次匹配。
+        筛选出置信度大于det_thresh的检测框，用于主匹配。
+        '''
         inds_low = scores > 0.1
         inds_high = scores < self.det_thresh
         inds_second = np.logical_and(inds_low, inds_high)  # self.det_thresh > score > 0.1, for second matching
@@ -234,6 +253,7 @@ class OCSort(object):
         for t in reversed(to_del):
             self.trackers.pop(t)
 
+        # 提取每个跟踪器的速度、上一次观测和历史观测。
         velocities = np.array(
             [trk.velocity if trk.velocity is not None else np.array((0, 0)) for trk in self.trackers])
         last_boxes = np.array([trk.last_observation for trk in self.trackers])
@@ -252,6 +272,10 @@ class OCSort(object):
             Second round of associaton by OCR
         """
         # BYTE association
+        '''
+        如果启用了 ByteTrack 的二次匹配机制，对低置信度检测框进行匹配。
+        使用 IoU 进行匹配，并更新匹配到的跟踪器。
+        '''
         if self.use_byte and len(dets_second) > 0 and unmatched_trks.shape[0] > 0:
             u_trks = trks[unmatched_trks]
             iou_left = self.asso_func(dets_second, u_trks)          # iou between low score detections and unmatched tracks

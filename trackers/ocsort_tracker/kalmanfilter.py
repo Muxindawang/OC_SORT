@@ -386,7 +386,14 @@ class KalmanFilterNew(object):
         """
         self.attr_saved = deepcopy(self.__dict__)
 
-
+    """
+    在卡尔曼滤波器中恢复之前冻结的状态，并通过插值生成虚拟轨迹来更新滤波器的状态。
+    这种方法通常用于处理目标跟踪中的观测缺失问题，特别是在目标暂时不可见时，通过插值恢复其运动轨迹。
+    恢复之前冻结的状态（self.attr_saved）。
+    通过插值生成虚拟轨迹，填补观测缺失期间的状态。
+    使用生成的虚拟轨迹更新卡尔曼滤波器的状态。
+    虚拟轨迹是怎么生成的？历史中之前两次观察到的位置，size，插值计算出速度并按照匀速模型得出虚拟轨迹，回到历史中消失时刻的kf参数，并逐步update到现在
+    """
     def unfreeze(self):
         if self.attr_saved is not None:
             new_history = deepcopy(self.history_obs)
@@ -395,6 +402,7 @@ class KalmanFilterNew(object):
             self.history_obs = self.history_obs[:-1]
             occur = [int(d is None) for d in new_history]
             indices = np.where(np.array(occur)==0)[0]
+            # 获取到目标消失前存在的两帧
             index1 = indices[-2]
             index2 = indices[-1]
             box1 = new_history[index1]
@@ -461,8 +469,15 @@ class KalmanFilterNew(object):
 
         # append the observation
         self.history_obs.append(z)
-        
+        '''
+        如果 z 是 None，表示当前时刻没有测量值：
+        如果之前有观测值，则冻结当前参数，以便后续可能的在线平滑处理。
+        设置 self.observed 为 False。
+        将 self.z 设置为 None，并复制当前状态 x 和协方差矩阵 P 到后验状态。
+        返回，不进行进一步的更新。
+        '''
         if z is None:
+            # self.observed代表之前有测量值
             if self.observed:
                 """
                     Got no observation so freeze the current parameters for future
@@ -475,7 +490,8 @@ class KalmanFilterNew(object):
             self.P_post = self.P.copy()
             self.y = zeros((self.dim_z, 1))
             return
-        
+
+        # 当前有观察值，上一帧没有，就解冻，解冻改变了什么？改变了kf的参数
         # self.observed = True
         if not self.observed:
             """
@@ -525,6 +541,7 @@ class KalmanFilterNew(object):
         self.x_post = self.x.copy()
         self.P_post = self.P.copy()
 
+    # 功能：使用卡尔曼滤波器的状态传播方程预测状态（先验）。仅更新状态 x，状态协方差 P 保持不变。
     def predict_steadystate(self, u=0, B=None):
         """
         Predict state (prior) using the Kalman filter state propagation

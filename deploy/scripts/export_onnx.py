@@ -64,7 +64,7 @@ def main():
         ckpt_file = args.ckpt
 
     # load the model state dict
-    ckpt = torch.load(ckpt_file, map_location="cpu")
+    ckpt = torch.load(ckpt_file, map_location="cpu", weights_only=True)
 
     model.eval()
     if "model" in ckpt:
@@ -75,7 +75,7 @@ def main():
 
     logger.info("loading checkpoint done.")
     dummy_input = torch.randn(1, 3, exp.test_size[0], exp.test_size[1])
-    torch.onnx._export(
+    torch.onnx.export(
         model,
         dummy_input,
         args.output_name,

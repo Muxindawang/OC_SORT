@@ -148,7 +148,7 @@ def ciou_batch(bboxes1, bboxes2):
     
     return (ciou + 1) / 2.0 # resize from (-1,1) to (0,1)
 
-
+# 欧氏距离
 def ct_dist(bboxes1, bboxes2):
     """
         Measure the center distance between two sets of bounding boxes,
@@ -173,7 +173,7 @@ def ct_dist(bboxes1, bboxes2):
     return ct_dist.max() - ct_dist # resize to (0,1)
 
 
-
+# 中心点距离向量归一化
 def speed_direction_batch(dets, tracks):
     tracks = tracks[..., np.newaxis]
     CX1, CY1 = (dets[:,0] + dets[:,2])/2.0, (dets[:,1]+dets[:,3])/2.0
@@ -185,7 +185,7 @@ def speed_direction_batch(dets, tracks):
     dy = dy / norm
     return dy, dx # size: num_track x num_det
 
-
+# 匈牙利匹配算法
 def linear_assignment(cost_matrix):
     try:
         import lap
@@ -208,6 +208,7 @@ def associate_detections_to_trackers(detections,trackers,iou_threshold = 0.3):
     iou_matrix = iou_batch(detections, trackers)
 
     if min(iou_matrix.shape) > 0:
+        # a是一个二维数组，1表示第i个检测和底j个track的iou超过阈值
         a = (iou_matrix > iou_threshold).astype(np.int32)
         if a.sum(1).max() == 1 and a.sum(0).max() == 1:
             matched_indices = np.stack(np.where(a), axis=1)
@@ -240,20 +241,27 @@ def associate_detections_to_trackers(detections,trackers,iou_threshold = 0.3):
 
     return matches, np.array(unmatched_detections), np.array(unmatched_trackers)
 
-
+# 使用IOU和速度方向变化的属性进行关联匹配
+# 先计算检测框和上一帧跟踪中心点连线向量 与 上一帧跟踪速度方向向量 之间的夹角变化 作为匈牙利匹配的参数，0.5表示方向完全一致，-0.5是完全相反
 def associate(detections, trackers, iou_threshold, velocities, previous_obs, vdc_weight):    
     if(len(trackers)==0):
         return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
 
     Y, X = speed_direction_batch(detections, previous_obs)
+    # 两个方向的速度分量
     inertia_Y, inertia_X = velocities[:,0], velocities[:,1]
     inertia_Y = np.repeat(inertia_Y[:, np.newaxis], Y.shape[1], axis=1)
     inertia_X = np.repeat(inertia_X[:, np.newaxis], X.shape[1], axis=1)
+    # 计算方向向量与速度向量之间的夹角余弦值。
+    # 两个向量的点积 点积的结果理论上应该在 [−1,1] 范围内，因为夹角余弦值的范围是 [−1,1]。
+    # 使用 np.clip 函数可以将结果限制在 [−1,1] 范围内，避免后续计算反余弦函数（np.arccos）时出现错误。
     diff_angle_cos = inertia_X * X + inertia_Y * Y
     diff_angle_cos = np.clip(diff_angle_cos, a_min=-1, a_max=1)
+    # 计算夹角 diff_angle为0（夹角为0度）表示方向完全一致，pi为完全相反
     diff_angle = np.arccos(diff_angle_cos)
     diff_angle = (np.pi /2.0 - np.abs(diff_angle)) / np.pi
 
+    # valid_mask：标记哪些跟踪框是有效的（previous_obs[:,4] >= 0）。无效的跟踪框不会参与匹配。
     valid_mask = np.ones(previous_obs.shape[0])
     valid_mask[np.where(previous_obs[:,4]<0)] = 0
     
@@ -262,6 +270,7 @@ def associate(detections, trackers, iou_threshold, velocities, previous_obs, vdc
     # iou_matrix = iou_matrix * scores # a trick sometiems works, we don't encourage this
     valid_mask = np.repeat(valid_mask[:, np.newaxis], X.shape[1], axis=1)
 
+    # angle_diff_cost：计算方向变化惩罚项，与有效掩码和置信度相乘，最终得到方向变化成本矩阵。
     angle_diff_cost = (valid_mask * diff_angle) * vdc_weight
     angle_diff_cost = angle_diff_cost.T
     angle_diff_cost = angle_diff_cost * scores
@@ -341,6 +350,7 @@ def associate_kitti(detections, trackers, det_cates, iou_threshold,
     for i in range(num_dets):
             for j in range(num_trk):
                 if det_cates[i] != trackers[j, 4]:
+                        # 表示二者类别不一致
                         cate_matrix[i][j] = -1e6
     
     cost_matrix = - iou_matrix -angle_diff_cost - cate_matrix

@@ -256,6 +256,10 @@ class MOTEvaluator:
                     all_dets = detections[video_name]
                     outputs = [all_dets[all_dets[:,0] == frame_id][:, 1:]]
                 else:
+                    '''
+                    将图像转换为指定类型（半精度或单精度）
+                    使用模型进行推理，并对输出进行后处理（如 NMS）
+                    '''
                     imgs = imgs.type(tensor_type)
 
                     # skip the the last iters since batchsize might be not enough for batch inference
@@ -308,7 +312,7 @@ class MOTEvaluator:
                 result_filename = os.path.join(result_folder, '{}.txt'.format(video_names[video_id]))
                 write_results_no_score(result_filename, results)
 
-        statistics = torch.cuda.FloatTensor([inference_time, track_time, n_samples])
+        statistics = torch.tensor([inference_time, track_time, n_samples], dtype=torch.float32, device='cuda')
         if distributed:
             data_list = gather(data_list, dst=0)
             data_list = list(itertools.chain(*data_list))
